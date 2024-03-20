@@ -2,15 +2,111 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 )
+
+const listHeight = 30
+
+var index int
+var (
+	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
+	itemStyle         = lipgloss.NewStyle().PaddingLeft(4)
+	selectedItemStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(lipgloss.Color("170"))
+	paginationStyle   = list.DefaultStyles().PaginationStyle.PaddingLeft(4)
+	helpStyle         = list.DefaultStyles().HelpStyle.PaddingLeft(4).PaddingBottom(1)
+	quitTextStyle     = lipgloss.NewStyle().Margin(1, 0, 2, 4)
+)
+
+type item string
+
+var items = []list.Item{}
+
+func (i item) FilterValue() string { return "" }
+
+type itemDelegate struct{}
+
+func (d itemDelegate) Height() int                             { return 1 }
+func (d itemDelegate) Spacing() int                            { return 0 }
+func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
+func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
+	i, ok := listItem.(item)
+	if !ok {
+		return
+	}
+
+	str := fmt.Sprintf("%d. %s", index+1, i)
+
+	fn := itemStyle.Render
+	if index == m.Index() {
+		fn = func(s ...string) string {
+			return selectedItemStyle.Render("> " + strings.Join(s, " "))
+		}
+	}
+
+	fmt.Fprint(w, fn(str))
+}
+
+type model struct {
+	list     list.Model
+	choice   string
+	quitting bool
+	index    int
+}
+
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.list.SetWidth(msg.Width)
+		return m, nil
+
+	case tea.KeyMsg:
+		switch keypress := msg.String(); keypress {
+		case "q", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "enter":
+			i, ok := m.list.SelectedItem().(item)
+			if ok {
+				m.choice = string(i)
+				index = m.list.Index()
+				m.index = index
+
+			}
+			return m, tea.Quit
+
+		}
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m model) View() string {
+	if m.choice != "" {
+		return quitTextStyle.Render(fmt.Sprintf("%s Selected", m.choice))
+	}
+	if m.quitting {
+		return quitTextStyle.Render("Exiting...")
+	}
+	return "\n" + m.list.View()
+}
 
 var (
 	snapshotLength int32         = 65535
@@ -46,7 +142,6 @@ func fileArg() {
 }
 func noArgs() {
 	var GUIDList []string
-	GUIDList = append(GUIDList, "")
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
 		log.Fatal(err)
@@ -60,28 +155,38 @@ func noArgs() {
 			if address.IP.To4() == nil {
 			} else if address.IP == nil || address.IP.IsLoopback() {
 			} else {
-				fmt.Println("\nName: ", device2.Name)
+				//	fmt.Println("\nName: ", device2.Name)
 				GUIDList = append(GUIDList, device2.Name)
-				fmt.Println("Description: ", device2.Description)
-				fmt.Println("- IP address: ", address.IP)
+				//	fmt.Println(device2.Name)
+				items = append(items, item(device2.Description))
+				//fmt.Println("Description: ", device2.Description)
+				//fmt.Println("- IP address: ", address.IP)
 
 			}
 		}
 	}
-	for _, GUID := range GUIDList {
-		fmt.Println(GUID)
-	}
-	// fmt.Println(GUIDList)
-	fmt.Println("Please enter what interface you want to use")
-	var selected int
-	fmt.Scanln(&selected)
-	// fmt.Println(selected)
+	const defaultWidth = 20
 
+	l := list.New(items, itemDelegate{}, defaultWidth, listHeight)
+	l.Title = "What adapter do you want to listen with"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(false)
+	l.Styles.Title = titleStyle
+	l.Styles.PaginationStyle = paginationStyle
+	l.Styles.HelpStyle = helpStyle
+
+	m := model{list: l}
+
+	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+		fmt.Println("Error running program:", err)
+		os.Exit(1)
+	}
+	fmt.Println(index)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	handle, err = pcap.OpenLive(GUIDList[selected], snapshotLength, promiscuous, timeout)
+	handle, err = pcap.OpenLive(GUIDList[index], snapshotLength, promiscuous, timeout)
 	if err != nil {
 		log.Fatal("OpenLive Call: ", err)
 	}
@@ -92,8 +197,7 @@ func noArgs() {
 		handle, handle.LinkType()).Packets()
 
 	for pkt := range packets {
-
-		// fmt.Println(pkt)
+		time.Sleep(time.Second * 3)
 		printPacketInfo(pkt)
 	}
 
