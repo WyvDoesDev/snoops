@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
-const listHeight = 30
+const listHeight = 28
 
+var windows bool
 var index int
 var (
 	titleStyle        = lipgloss.NewStyle().MarginLeft(2)
@@ -155,10 +157,15 @@ func noArgs() {
 			if address.IP.To4() == nil {
 			} else if address.IP == nil || address.IP.IsLoopback() {
 			} else {
-				//	fmt.Println("\nName: ", device2.Name)
+				// fmt.Println("\nName: ", device2.Name)
 				GUIDList = append(GUIDList, device2.Name)
-				//	fmt.Println(device2.Name)
-				items = append(items, item(device2.Description))
+				fmt.Println(device2.Name)
+				if windows {
+					items = append(items, item(device2.Description))
+				}
+				if !windows {
+					items = append(items, item(device2.Name))
+				}
 				//fmt.Println("Description: ", device2.Description)
 				//fmt.Println("- IP address: ", address.IP)
 
@@ -203,7 +210,9 @@ func noArgs() {
 
 }
 func main() {
-
+	if runtime.GOOS == "windows" {
+		windows = true
+	}
 	args := os.Args
 	fmt.Println(args)
 	if len(args) != 1 {
